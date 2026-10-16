@@ -1,0 +1,51 @@
+name: Empaquetar
+
+# Junta los .rds de los artefactos de una o varias corridas y los publica como un release,
+# para descargarlos de una vez en el portátil.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "IDs de las corridas de Simulacion, separados por coma"
+        required: true
+      etiqueta:
+        description: "Etiqueta del release (p. ej. uwv4-parte1)"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  empaquetar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Descargar artefactos
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          mkdir -p cache registro
+          for r in ${RUNS//,/ }; do
+            gh run download "$r" -R "$GITHUB_REPOSITORY" -D "art_$r"
+          done
+          find art_* -name '*.rds' -exec mv -n {} cache/ \;
+          find art_* -name '*.csv' -path '*registro*' -exec mv -n {} registro/ \;
+          ls cache | wc -l
+          ls cache | sed -E 's/_tau.*//' | sort | uniq -c
+
+      - name: Comprimir
+        run: |
+          ls cache > lista_rds.txt
+          tar -cf - -C cache . | split -b 1900M -d - "cache_${{ inputs.etiqueta }}.tar.part"
+          tar -czf "registro_${{ inputs.etiqueta }}.tar.gz" registro
+          ls -l
+
+      - name: Publicar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.etiqueta }}" -R "$GITHUB_REPOSITORY" \
+            --title "${{ inputs.etiqueta }}" --notes "Corridas: ${{ inputs.runs }}" \
+            cache_*.tar.part* registro_*.tar.gz lista_rds.txt
