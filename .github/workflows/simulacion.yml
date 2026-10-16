@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "v4 (Unit-Gamma) o v3 (Unit-Weibull)"
+        description: "v4uw (Unit-Weibull), v4kum (Kumaraswamy) o v4 (Unit-Gamma)"
         required: true
-        default: "v4"
-      enlace:
-        description: "logit, probit o cloglog"
+        default: "v4uw"
+      enlaces:
+        description: "Enlaces separados por coma"
         required: true
-        default: "cloglog"
+        default: "logit,probit,cloglog"
       taus:
         description: "Cuantiles separados por coma"
         required: true
@@ -18,7 +18,7 @@ on:
       n_sujetos:
         description: "Tamaños de muestra separados por coma"
         required: true
-        default: "500"
+        default: "30,50,100,200,500"
       rep_ini:
         description: "Primera réplica"
         required: true
@@ -28,9 +28,9 @@ on:
         required: true
         default: "500"
       n_bloques:
-        description: "Número de trabajos en paralelo (máx. 256; GitHub corre 20 a la vez)"
+        description: "Trabajos por enlace (GitHub corre 20 a la vez en total)"
         required: true
-        default: "20"
+        default: "16"
       horas_max:
         description: "Horas tras las cuales un trabajo no empieza ajustes nuevos"
         required: true
@@ -40,10 +40,21 @@ jobs:
   preparar:
     runs-on: ubuntu-latest
     outputs:
-      bloques: ${{ steps.m.outputs.bloques }}
+      matriz: ${{ steps.m.outputs.matriz }}
     steps:
       - id: m
-        run: echo "bloques=$(python3 -c 'import json;print(json.dumps(list(range(1, ${{ inputs.n_bloques }} + 1))))')" >> "$GITHUB_OUTPUT"
+        env:
+          ENLACES: ${{ inputs.enlaces }}
+          N_BLOQUES: ${{ inputs.n_bloques }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          enl = [e.strip() for e in os.environ["ENLACES"].split(",") if e.strip()]
+          nb = int(os.environ["N_BLOQUES"])
+          inc = [{"enlace": e, "bloque": b} for e in enl for b in range(1, nb + 1)]
+          assert len(inc) <= 256, "Máximo 256 trabajos por corrida"
+          print("matriz=" + json.dumps({"include": inc}))
+          PY
 
   ajustar:
     needs: preparar
@@ -51,8 +62,8 @@ jobs:
     timeout-minutes: 355
     strategy:
       fail-fast: false
-      matrix:
-        bloque: ${{ fromJSON(needs.preparar.outputs.bloques) }}
+      matrix: ${{ fromJSON(needs.preparar.outputs.matriz) }}
+    name: ${{ inputs.version }} ${{ matrix.enlace }} bloque ${{ matrix.bloque }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,10 +75,10 @@ jobs:
           R --version | head -1
           nproc
 
-      - name: Ajustar bloque ${{ matrix.bloque }}
+      - name: Ajustar
         env:
           VERSION: ${{ inputs.version }}
-          ENLACE: ${{ inputs.enlace }}
+          ENLACE: ${{ matrix.enlace }}
           TAUS: ${{ inputs.taus }}
           N_SUJETOS: ${{ inputs.n_sujetos }}
           REP_INI: ${{ inputs.rep_ini }}
@@ -82,7 +93,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cache-${{ inputs.version }}-${{ inputs.enlace }}-${{ github.run_id }}-bloque${{ matrix.bloque }}
+          name: cache-${{ inputs.version }}-${{ matrix.enlace }}-${{ github.run_id }}-bloque${{ matrix.bloque }}
           path: |
             _cache_simulacion_asesor/
             registro/

@@ -1,6 +1,6 @@
 ## Corre un bloque de ajustes Monte Carlo de la simulación 2.
 ## Variables de entorno:
-##   VERSION     v4 (Unit-Gamma) | v3 (Unit-Weibull)
+##   VERSION     v4 (Unit-Gamma) | v4uw (Unit-Weibull) | v4kum (Kumaraswamy) | v3 (Unit-Weibull, v3)
 ##   ENLACE      logit | probit | cloglog
 ##   TAUS        p. ej. "0.50,0.75"
 ##   N_SUJETOS   p. ej. "500" o "30,50,100,200,500"
@@ -25,7 +25,7 @@ rep_ini <- as.integer(env_num("REP_INI", 1))
 rep_fin <- as.integer(env_num("REP_FIN", R_mc))
 
 ## Misma clave que ajustar_simulacion(); se usa para saltar lo ya hecho sin generar datos.
-prefijo <- if (version_sim == "v4") "ughc" else if (escala_log) "uwlg" else "uwhc"
+prefijo <- switch(version_sim, v4 = "ughc", v4uw = "uwv4", v4kum = "kuv4", v3 = if (escala_log) "uwlg" else "uwhc")
 clave <- function(tau, n, replica) {
   huella <- paste(c(beta_true(tau), gamma_true, delta_true, as.numeric(params$phi_true),
                     as.numeric(params$sigma_b_true)), collapse = "_")

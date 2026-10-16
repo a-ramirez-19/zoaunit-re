@@ -1,5 +1,5 @@
-## Simulación 2 v3: Unit-Weibull (cloglog en escala log(-log)).
-## Funciones de ZOAUNIT_RE_simulacion_v3.qmd, copiadas sin cambios de los chunks
+## Simulación 2 v4: Kumaraswamy (diseño de la v4, escala log(-log) con los tres enlaces).
+## Funciones de ZOAUNIT_RE_simulacion_v4_kum.qmd, copiadas sin cambios de los chunks
 ## setup, valores-beta, valores-masas, funcion-generadora, modelo-jags y funciones-ajuste.
 ## Los parámetros son los del YAML del qmd; solo el enlace y la carpeta de caché vienen del entorno.
 ## La calibración (media y DE de la edad, proporción de mujeres) se lee de calibracion.rds,
@@ -25,7 +25,7 @@ params <- list(
   p1_ref = 0.08,
   gamma_z = 0.35,
   delta_z = -0.35,
-  phi_true = 5.0,
+  phi_true = 3.8,
   sigma_b_true = 1.0,
   enlace = Sys.getenv("ENLACE", "logit"),
   n_adapt = 750,
@@ -68,8 +68,8 @@ if (!enlace_nombre %in% names(enlaces_disponibles)) {
   stop("params$enlace debe ser 'logit', 'probit' o 'cloglog'; se recibio: ", enlace_nombre)
 }
 inv_enlace <- enlaces_disponibles[[enlace_nombre]]$inv
-## Con cloglog se usa la parametrización en escala log(-log) (corrección del 07/10/2026).
-escala_log <- identical(enlace_nombre, "cloglog")
+## v4: los tres enlaces se trabajan en escala log(-log theta).
+escala_log <- TRUE
 jags_inv_enlace <- enlaces_disponibles[[enlace_nombre]]$jags
 
 softmax_masas <- function(eta0, eta1) {
@@ -82,16 +82,23 @@ softmax_masas <- function(eta0, eta1) {
   )
 }
 
-q_uw <- function(u, theta, phi, tau) {
-  exp(log(clip01(theta)) * (log(clip01(u)) / log(tau))^(1 / phi))
+## Kumaraswamy: F(y) = 1 - (1 - y^a)^phi, con a tal que Q(tau) = theta:
+## a = log(qb) / log theta, qb = 1 - (1 - tau)^(1/phi). En escala llt = log(-log theta):
+## log a = log(-log qb) - llt y log(-log y) = llt - log(-log qb) + log(-log(1 - (1 - u)^(1/phi))).
+lqb_kum <- function(phi, tau) log(-log(-expm1(log1p(-tau) / phi)))
+q_kum_llt <- function(u, llt, phi, tau) {
+  exp(-exp(llt - lqb_kum(phi, tau) + log(-log1p(-exp(log1p(-u) / phi)))))
 }
 
-ld_uw <- function(y, theta, phi, tau) {
-  lt <- log(clip01(theta))
-  ly <- log(clip01(y))
-  r <- ly / lt
-  s <- log(tau) / lt
-  log(phi) + log(s) + (phi - 1) * log(r) - ly + log(tau) * r^phi
+## v4: Unit-Gamma. Y = exp(-T), T ~ Gamma(phi, tasa b), b = q_Gamma(1 - tau; phi, 1) / (-log theta).
+## Todo se escribe con llt = log(-log theta): -log theta = exp(llt).
+q_ug_llt <- function(u, llt, phi, tau) {
+  b <- qgamma(1 - tau, phi, 1) * exp(-llt)
+  exp(-qgamma(1 - u, phi, rate = b))
+}
+ld_ug_llt <- function(ly, llt, phi, tau) {
+  lb <- log(qgamma(1 - tau, phi, 1)) - llt
+  phi * lb - lgamma(phi) + (phi - 1) * log(-ly) + (exp(lb) - 1) * ly
 }
 
 ## Corrección de cloglog (07/10/2026). Con theta = 1 - exp(-exp(eta)), 1 - theta decrece como doble
@@ -100,6 +107,21 @@ ld_uw <- function(y, theta, phi, tau) {
 lth_cloglog <- function(eta) {
   x <- exp(eta)
   ifelse(x < 700, log(-log1p(-exp(-pmin(x, 700)))), -x)
+}
+
+## v4: log(-log theta) estable con cada enlace.
+lth_enlace <- function(eta, enlace = enlace_nombre) {
+  switch(
+    enlace,
+    logit = log(log1p(exp(-pmax(eta, -700)))),
+    probit = log(-pnorm(eta, log.p = TRUE)),
+    cloglog = {
+      x <- exp(pmin(eta, 700))
+      ## x pequeño: -log(theta) = -log(-expm1(-x)) es exacto; x grande: la fórmula de lth_cloglog().
+      suppressWarnings(ifelse(x > 1, lth_cloglog(eta), log(-log(-expm1(-x)))))
+    },
+    stop("Enlace no reconocido: ", enlace)
+  )
 }
 ## ---- valores-beta ----
 taus <- leer_numeros(params$taus)
@@ -187,18 +209,12 @@ simular_dataset_tau <- function(
   pr <- softmax_masas(eta0, eta1)
 
   ## Nueva distribución interior para ESTE tau.
+  ## Kumaraswamy en escala log(-log y) = llt - log(-log qb) + log(-log(1 - (1 - U)^(1/phi))), U ~ U(0,1).
+  ## Exacto con los tres enlaces aunque theta o y valgan 1 en doble precisión.
+  lth <- lth_enlace(eta_q)
   u_interior <- runif(length(id))
-  if (escala_log) {
-    ## cloglog: theta puede quedar a menos de 1e-16 de 1. Se genera directamente
-    ## l_y = log(-log y) = l_theta + log r, exacto aunque theta o y valgan 1 en doble precisión.
-    lth <- lth_cloglog(eta_q)
-    lly_interior <- lth + log(log(u_interior) / log(tau)) / phi
-    y_interior <- exp(-exp(lly_interior))
-  } else {
-    ## logit y probit: generación original (theta nunca se acerca a 1 en este diseño).
-    y_interior <- q_uw(u_interior, theta = theta, phi = phi, tau = tau)
-    lly_interior <- log(-log(y_interior))
-  }
+  lly_interior <- lth - lqb_kum(phi, tau) + log(-log1p(-exp(log1p(-u_interior) / phi)))
+  y_interior <- exp(-exp(lly_interior))
 
   ## Asignación a 0, 1 o componente interior.
   u_masa <- runif(length(id))
@@ -265,80 +281,67 @@ simular_dataset_tau <- function(
   )
 }
 ## ---- modelo-jags ----
-modelo_jags_uw <- "
-model {
-  for (k in 1:N) {
-    grp[k] ~ dcat(pr[k, 1:3])
-    e0[k] <- inprod(Z[k, ], gamma0[])
-    e1[k] <- inprod(Z[k, ], gamma1[])
-    mm[k] <- max(0, max(e0[k], e1[k]))
-    den[k] <- exp(-mm[k]) + exp(e0[k] - mm[k]) + exp(e1[k] - mm[k])
-    pr[k, 1] <- exp(e0[k] - mm[k]) / den[k]
-    pr[k, 2] <- exp(e1[k] - mm[k]) / den[k]
-    pr[k, 3] <- exp(-mm[k]) / den[k]
-  }
-
-  for (m in 1:Nc) {
-    eta[m] <- mu[idc[m]]
-    theta[m] <- max(min(__INV_ENLACE__, 1 - 1.0E-6), 1.0E-6)
-    lth[m] <- log(theta[m])
-    r[m] <- max(1.0E-12, log(yc[m]) / lth[m])
-    s[m] <- log(tau) / lth[m]
-    logdc[m] <- log(varphi) + log(s[m]) + (varphi - 1) * log(r[m]) -
-                log(yc[m]) + log(tau) * pow(r[m], varphi)
-    zeros.c[m] ~ dpois(Cz - logdc[m])
-  }
-
-  ## Centrado jerárquico: mu[i] = X_i beta + b_i con b_i ~ N(0, sigma.b^2).
-  for (i in 1:n) {
-    mu[i] ~ dnorm(inprod(Xs[i, ], beta[]), tau.b)
-  }
-
-  for (j in 1:px) {
-    beta[j] ~ dnorm(0, 0.01)
-  }
-  for (j in 1:pz) {
-    gamma0[j] ~ dnorm(0, 0.01)
-    gamma1[j] ~ dnorm(0, 0.01)
-  }
-
-  varphi ~ dgamma(0.1, 0.01)
-  sigma.b ~ dunif(0, 100)
-  tau.b <- pow(sigma.b, -2)
-}
-"
-
-## Versión en escala log(-log) para cloglog (corrección del 07/10/2026): mismo modelo, sin recortes de theta.
-modelo_jags_uw_log <- "
-model {
-  for (k in 1:N) {
-    grp[k] ~ dcat(pr[k, 1:3])
-    e0[k] <- inprod(Z[k, ], gamma0[])
-    e1[k] <- inprod(Z[k, ], gamma1[])
-    mm[k] <- max(0, max(e0[k], e1[k]))
-    den[k] <- exp(-mm[k]) + exp(e0[k] - mm[k]) + exp(e1[k] - mm[k])
-    pr[k, 1] <- exp(e0[k] - mm[k]) / den[k]
-    pr[k, 2] <- exp(e1[k] - mm[k]) / den[k]
-    pr[k, 3] <- exp(-mm[k]) / den[k]
-  }
-
-  for (m in 1:Nc) {
-    eta[m] <- mu[idc[m]]
-    ## l_theta = log(-log theta) para cloglog, sin recortes. Con x = exp(eta) y u = exp(-x):
-    ## si x > 4, -log(1 - u) = u (1 + u/2 + u^2/3 + ...) y l_theta = -x + log(1 + u/2 + ...);
-    ## si no, la fórmula directa es exacta. min(x, 4) evita log(0) en la rama que ifelse no usa.
-    ## eta se acota en 20 (theta = 1 - exp(-4.9e8), indistinguible de 1) solo para que una propuesta
-    ## extrema del muestreador no produzca Inf; no toca ningún valor que los datos puedan sostener.
+## v4: Unit-Gamma en escala llt = log(-log theta) con los tres enlaces, sin recortes sobre theta.
+## Cada enlace calcula llt de forma estable (JAGS evalúa las dos ramas de `ifelse`, así que cada una
+## recibe argumentos acotados). eta se acota en [-35, 35] (cloglog: 20) solo para que una propuesta
+## extrema no produzca Inf; esos valores están lejos de cualquiera que los datos puedan sostener.
+llt_jags <- list(
+  logit = "
+    ec[m] <- max(min(eta[m], 35), -35)
+    u[m] <- exp(-ec[m])
+    llt[m] <- ifelse(step(ec[m] - 5),
+                     -ec[m] + log(1 - u[m] / 2 + pow(u[m], 2) / 3 - pow(u[m], 3) / 4 + pow(u[m], 4) / 5),
+                     log(log(1 + u[m])))
+",
+  probit = "
+    ec[m] <- max(min(eta[m], 35), -35)
+    pe[m] <- phi(-ec[m])
+    llt[m] <- ifelse(step(ec[m] - 3.1),
+                     log(pe[m] + pow(pe[m], 2) / 2 + pow(pe[m], 3) / 3),
+                     log(-log(phi(min(ec[m], 3.1)))))
+",
+  cloglog = "
     x[m] <- exp(min(eta[m], 20))
     u[m] <- exp(-x[m])
-    xs[m] <- min(x[m], 4)
-    lth[m] <- ifelse(step(x[m] - 4),
+    xs[m] <- max(min(x[m], 4), 1.0E-5)
+    llt[m] <- ifelse(step(x[m] - 4),
                      -x[m] + log(1 + u[m] / 2 + pow(u[m], 2) / 3 + pow(u[m], 3) / 4 + pow(u[m], 4) / 5),
-                     log(-log(1 - exp(-xs[m]))))
-    ## log r = log(-log y) - log(-log theta);  log s = log(-log tau) - log(-log theta)
-    lr[m] <- llyc[m] - lth[m]
-    logdc[m] <- log(varphi) + log(-log(tau)) - lth[m] + (varphi - 1) * lr[m] -
-                lyc[m] + log(tau) * exp(min(varphi * lr[m], 700))
+                     ifelse(step(1.0E-5 - x[m]),
+                            log(-eta[m] + x[m] / 2),
+                            log(-log(1 - exp(-xs[m])))))
+"
+)
+
+modelo_jags_ug <- "
+model {
+  for (k in 1:N) {
+    grp[k] ~ dcat(pr[k, 1:3])
+    e0[k] <- inprod(Z[k, ], gamma0[])
+    e1[k] <- inprod(Z[k, ], gamma1[])
+    mm[k] <- max(0, max(e0[k], e1[k]))
+    den[k] <- exp(-mm[k]) + exp(e0[k] - mm[k]) + exp(e1[k] - mm[k])
+    pr[k, 1] <- exp(e0[k] - mm[k]) / den[k]
+    pr[k, 2] <- exp(e1[k] - mm[k]) / den[k]
+    pr[k, 3] <- exp(-mm[k]) / den[k]
+  }
+
+  ## qb = 1 - (1 - tau)^(1/phi), acotado en (1e-12, 1 - 1e-12) solo para que una propuesta extrema
+  ## de varphi no produzca log(0); en valores plausibles no actúa.
+  lqb <- log(-log(min(max(1.0E-12, 1 - pow(1 - tau, 1 / varphi)), 1 - 1.0E-12)))
+  for (m in 1:Nc) {
+    eta[m] <- mu[idc[m]]
+__LLT__
+    ## Kumaraswamy: log a = log(-log qb) - llt; t = a (-log y) = exp(log a + log(-log y)).
+    ## log(1 - y^a) = log(1 - exp(-t)): serie en t pequeño, fórmula directa si t >= 1e-4.
+    la[m] <- lqb - llt[m]
+    lt[m] <- la[m] + llyc[m]
+    tk[m] <- exp(min(lt[m], 700))
+    ts[m] <- min(tk[m], 1.0E-4)
+    tg[m] <- max(tk[m], 1.0E-4)
+    l1my[m] <- ifelse(step(tk[m] - 1.0E-4),
+                      log(1 - exp(-tg[m])),
+                      lt[m] + log(1 - ts[m] / 2 + pow(ts[m], 2) / 6))
+    logdc[m] <- la[m] + log(varphi) + (exp(min(la[m], 700)) - 1) * lyc[m] + (varphi - 1) * l1my[m]
     zeros.c[m] ~ dpois(Cz - logdc[m])
   }
 
@@ -360,9 +363,9 @@ model {
   tau.b <- pow(sigma.b, -2)
 }
 "
-
-modelo_jags_uw <- sub("__INV_ENLACE__", jags_inv_enlace, modelo_jags_uw, fixed = TRUE)
-if (escala_log) modelo_jags_uw <- modelo_jags_uw_log
+modelo_jags_ug <- sub("__LLT__", llt_jags[[enlace_nombre]], modelo_jags_ug, fixed = TRUE)
+## Nombre que usa el resto del Notebook.
+modelo_jags_uw <- modelo_jags_ug
 
 ## ---- funciones-ajuste ----
 config_mcmc <- list(
@@ -400,7 +403,7 @@ ajustar_simulacion <- function(sim, usar_cache = TRUE) {
     ## "hc": modelo con centrado jerárquico; no reutiliza ajustes de la versión no centrada.
     ## "lg": cloglog en escala log(-log); no reutiliza los ajustes de cloglog con recortes (inválidos).
     "%s_%s_tau%03d_n%04d_rep%04d_%d-%d-%d-%d-%d_g%s",
-    if (escala_log) "uwlg" else "uwhc", enlace_nombre, round(100 * sim$tau), sim$n, sim$replica,
+    "kuv4", enlace_nombre, round(100 * sim$tau), sim$n, sim$replica,   # v4: Kumaraswamy
     config_mcmc$n_adapt, config_mcmc$n_burn, config_mcmc$n_iter,
     config_mcmc$n_thin, config_mcmc$n_chains, huella
   )
@@ -430,8 +433,8 @@ ajustar_simulacion <- function(sim, usar_cache = TRUE) {
     zeros.c = rep(0, sim$Nc)
   )
   if (escala_log) {
-    ## cloglog: log y y log(-log y) en lugar de y; Cz mayor porque la log-densidad puede ser grande
-    ## cuando theta está muy cerca de 1.
+    ## v4 (los tres enlaces): log y y log(-log y) en lugar de y; Cz mayor porque la log-densidad puede
+    ## ser grande cuando theta está muy cerca de 1.
     dat$yc <- NULL
     dat$lyc <- sim$lyc
     dat$llyc <- sim$llyc
