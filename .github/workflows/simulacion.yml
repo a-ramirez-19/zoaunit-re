@@ -1,8 +1,12 @@
-name: Simulacion n500
+name: Simulacion
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "v4 (Unit-Gamma) o v3 (Unit-Weibull)"
+        required: true
+        default: "v4"
       enlace:
         description: "logit, probit o cloglog"
         required: true
@@ -12,7 +16,7 @@ on:
         required: true
         default: "0.25,0.50,0.75"
       n_sujetos:
-        description: "Tamaño de muestra"
+        description: "Tamaños de muestra separados por coma"
         required: true
         default: "500"
       rep_ini:
@@ -62,6 +66,7 @@ jobs:
 
       - name: Ajustar bloque ${{ matrix.bloque }}
         env:
+          VERSION: ${{ inputs.version }}
           ENLACE: ${{ inputs.enlace }}
           TAUS: ${{ inputs.taus }}
           N_SUJETOS: ${{ inputs.n_sujetos }}
@@ -77,7 +82,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cache-${{ inputs.enlace }}-n${{ inputs.n_sujetos }}-bloque${{ matrix.bloque }}
+          name: cache-${{ inputs.version }}-${{ inputs.enlace }}-${{ github.run_id }}-bloque${{ matrix.bloque }}
           path: |
             _cache_simulacion_asesor/
             registro/
