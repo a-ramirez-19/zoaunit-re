@@ -3,7 +3,7 @@ name: Empaquetar
 # Junta los .rds de los artefactos de una o varias corridas de Simulacion, calcula los resultados por
 # réplica y las métricas de cada enlace (como el qmd) y publica todo como un release:
 #   cache_<version>_<enlace>.tar      los .rds para copiar a _cache_simulacion_asesor
-#   resultados_<version>.zip          resultados_sim2_<version>/ (por réplica, métricas y faltantes)
+#   resultados_<version>.zip          carpeta de resultados del qmd (por réplica, métricas y faltantes)
 on:
   workflow_dispatch:
     inputs:
@@ -55,8 +55,9 @@ jobs:
           CACHE_DIR: _cache_simulacion_asesor
         run: |
           for e in logit probit cloglog; do ENLACE=$e Rscript resumir_resultados.R; done
-          cp -r registro "resultados_sim2_${VERSION}/registro_github"
-          zip -qr "resultados_${VERSION}.zip" "resultados_sim2_${VERSION}"
+          case "$VERSION" in v4uw) D=resultados_sim2_v4_uw;; v4kum) D=resultados_sim2_v4_kum;; *) D="resultados_sim2_${VERSION}";; esac
+          cp -r registro "$D/registro_github"
+          zip -qr "resultados_${VERSION}.zip" "$D"
 
       - name: Comprimir caché por enlace
         env:

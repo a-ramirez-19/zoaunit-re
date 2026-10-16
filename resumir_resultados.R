@@ -8,7 +8,9 @@ source(archivo_funciones)
 source("claves.R")
 tamanos_mc <- c(30L, 50L, 100L, 200L, 500L)
 R_mc <- 500L
-resultados_dir <- Sys.getenv("RESULTADOS_DIR", sprintf("resultados_sim2_%s", version_sim))
+## Mismas carpetas que el YAML de cada qmd.
+resultados_dir <- Sys.getenv("RESULTADOS_DIR", switch(version_sim, v4uw = "resultados_sim2_v4_uw", v4kum = "resultados_sim2_v4_kum",
+                                                      sprintf("resultados_sim2_%s", version_sim)))
 
 grid_mc <- expand.grid(rr = seq_len(R_mc), tt = taus, nn = sort(tamanos_mc, decreasing = TRUE))
 grid_mc$ruta <- file.path(params$cache_dir, paste0(mapply(clave, grid_mc$tt, grid_mc$nn, grid_mc$rr), ".rds"))
