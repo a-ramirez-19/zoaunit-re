@@ -1,0 +1,85 @@
+name: Simulacion n500
+
+on:
+  workflow_dispatch:
+    inputs:
+      enlace:
+        description: "logit, probit o cloglog"
+        required: true
+        default: "cloglog"
+      taus:
+        description: "Cuantiles separados por coma"
+        required: true
+        default: "0.25,0.50,0.75"
+      n_sujetos:
+        description: "Tamaño de muestra"
+        required: true
+        default: "500"
+      rep_ini:
+        description: "Primera réplica"
+        required: true
+        default: "1"
+      rep_fin:
+        description: "Última réplica"
+        required: true
+        default: "500"
+      n_bloques:
+        description: "Número de trabajos en paralelo (máx. 256; GitHub corre 20 a la vez)"
+        required: true
+        default: "20"
+      horas_max:
+        description: "Horas tras las cuales un trabajo no empieza ajustes nuevos"
+        required: true
+        default: "5"
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      bloques: ${{ steps.m.outputs.bloques }}
+    steps:
+      - id: m
+        run: echo "bloques=$(python3 -c 'import json;print(json.dumps(list(range(1, ${{ inputs.n_bloques }} + 1))))')" >> "$GITHUB_OUTPUT"
+
+  ajustar:
+    needs: preparar
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        bloque: ${{ fromJSON(needs.preparar.outputs.bloques) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar R y JAGS
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            r-base-core jags r-cran-rjags r-cran-coda r-cran-dplyr
+          R --version | head -1
+          nproc
+
+      - name: Ajustar bloque ${{ matrix.bloque }}
+        env:
+          ENLACE: ${{ inputs.enlace }}
+          TAUS: ${{ inputs.taus }}
+          N_SUJETOS: ${{ inputs.n_sujetos }}
+          REP_INI: ${{ inputs.rep_ini }}
+          REP_FIN: ${{ inputs.rep_fin }}
+          BLOQUE: ${{ matrix.bloque }}
+          N_BLOQUES: ${{ inputs.n_bloques }}
+          HORAS_MAX: ${{ inputs.horas_max }}
+          CACHE_DIR: _cache_simulacion_asesor
+        run: Rscript run_bloque.R
+
+      - name: Subir resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-${{ inputs.enlace }}-n${{ inputs.n_sujetos }}-bloque${{ matrix.bloque }}
+          path: |
+            _cache_simulacion_asesor/
+            registro/
+          if-no-files-found: warn
+          retention-days: 30
