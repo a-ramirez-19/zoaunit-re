@@ -1,15 +1,21 @@
 name: Empaquetar
 
-# Junta los .rds de los artefactos de una o varias corridas y los publica como un release,
-# para descargarlos de una vez en el portátil.
+# Junta los .rds de los artefactos de una o varias corridas de Simulacion, calcula los resultados por
+# réplica y las métricas de cada enlace (como el qmd) y publica todo como un release:
+#   cache_<version>_<enlace>.tar      los .rds para copiar a _cache_simulacion_asesor
+#   resultados_<version>.zip          resultados_sim2_<version>/ (por réplica, métricas y faltantes)
 on:
   workflow_dispatch:
     inputs:
       runs:
         description: "IDs de las corridas de Simulacion, separados por coma"
         required: true
+      version:
+        description: "v4uw, v4kum o v4"
+        required: true
+        default: "v4uw"
       etiqueta:
-        description: "Etiqueta del release (p. ej. uwv4-parte1)"
+        description: "Etiqueta del release (p. ej. uwv4)"
         required: true
 
 permissions:
@@ -19,33 +25,55 @@ permissions:
 jobs:
   empaquetar:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar R y JAGS
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            r-base-core jags r-cran-rjags r-cran-coda r-cran-dplyr zip
+
       - name: Descargar artefactos
         env:
           GH_TOKEN: ${{ github.token }}
           RUNS: ${{ inputs.runs }}
         run: |
-          mkdir -p cache registro
+          mkdir -p _cache_simulacion_asesor registro
           for r in ${RUNS//,/ }; do
             gh run download "$r" -R "$GITHUB_REPOSITORY" -D "art_$r"
           done
-          find art_* -name '*.rds' -exec mv -n {} cache/ \;
+          find art_* -name '*.rds' -exec mv -n {} _cache_simulacion_asesor/ \;
           find art_* -name '*.csv' -path '*registro*' -exec mv -n {} registro/ \;
-          ls cache | wc -l
-          ls cache | sed -E 's/_tau.*//' | sort | uniq -c
+          rm -rf art_*
+          ls _cache_simulacion_asesor | sed -E 's/_tau.*//' | sort | uniq -c
 
-      - name: Comprimir
+      - name: Resultados por enlace
+        env:
+          VERSION: ${{ inputs.version }}
+          CACHE_DIR: _cache_simulacion_asesor
         run: |
-          ls cache > lista_rds.txt
-          tar -cf - -C cache . | split -b 1900M -d - "cache_${{ inputs.etiqueta }}.tar.part"
-          tar -czf "registro_${{ inputs.etiqueta }}.tar.gz" registro
-          ls -l
+          for e in logit probit cloglog; do ENLACE=$e Rscript resumir_resultados.R; done
+          cp -r registro "resultados_sim2_${VERSION}/registro_github"
+          zip -qr "resultados_${VERSION}.zip" "resultados_sim2_${VERSION}"
+
+      - name: Comprimir caché por enlace
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for e in logit probit cloglog; do
+            ( cd _cache_simulacion_asesor && ls | grep "_${e}_" > "../lista_${VERSION}_${e}.txt" || true )
+            if [ -s "lista_${VERSION}_${e}.txt" ]; then
+              tar -cf "cache_${VERSION}_${e}.tar" -C _cache_simulacion_asesor -T "lista_${VERSION}_${e}.txt"
+            fi
+          done
+          ls -l *.tar *.zip
 
       - name: Publicar release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ inputs.etiqueta }}" -R "$GITHUB_REPOSITORY" \
-            --title "${{ inputs.etiqueta }}" --notes "Corridas: ${{ inputs.runs }}" \
-            cache_*.tar.part* registro_*.tar.gz lista_rds.txt
+            --title "${{ inputs.etiqueta }}" --notes "Version ${{ inputs.version }}; corridas: ${{ inputs.runs }}" \
+            cache_*.tar "resultados_${{ inputs.version }}.zip" lista_*.txt
