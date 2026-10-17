@@ -50,6 +50,9 @@ jobs:
           ls _cache_simulacion_asesor | sed -E 's/_tau.*//' | sort | uniq -c
 
       - name: Resultados por enlace
+        # Para Unit-Gamma (v4) parte de los ajustes está solo en el portátil: no se calculan resultados aquí
+        # (los genera el render local del qmd), para no publicar métricas incompletas.
+        if: inputs.version != 'v4'
         env:
           VERSION: ${{ inputs.version }}
           CACHE_DIR: _cache_simulacion_asesor
@@ -77,4 +80,4 @@ jobs:
         run: |
           gh release create "${{ inputs.etiqueta }}" -R "$GITHUB_REPOSITORY" \
             --title "${{ inputs.etiqueta }}" --notes "Version ${{ inputs.version }}; corridas: ${{ inputs.runs }}" \
-            cache_*.tar "resultados_${{ inputs.version }}.zip" lista_*.txt
+            cache_*.tar lista_*.txt $(ls resultados_*.zip 2>/dev/null)
