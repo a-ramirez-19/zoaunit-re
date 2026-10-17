@@ -72,7 +72,7 @@ jobs:
               tar -cf "cache_${VERSION}_${e}.tar" -C _cache_simulacion_asesor -T "lista_${VERSION}_${e}.txt"
             fi
           done
-          ls -l *.tar *.zip
+          ls -l *.tar *.zip 2>/dev/null || true
 
       - name: Publicar release
         env:
