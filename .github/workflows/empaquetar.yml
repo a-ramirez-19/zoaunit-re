@@ -72,7 +72,8 @@ jobs:
               tar -cf "cache_${VERSION}_${e}.tar" -C _cache_simulacion_asesor -T "lista_${VERSION}_${e}.txt"
             fi
           done
-          ls -l *.tar *.zip 2>/dev/null || true
+          find . -maxdepth 1 -name 'lista_*.txt' -empty -delete
+          ls -l *.tar *.zip lista_*.txt 2>/dev/null || true
 
       - name: Publicar release
         env:
