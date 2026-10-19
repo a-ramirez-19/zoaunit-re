@@ -3,18 +3,20 @@ name: Simulacion 3
 # Simulación 3 de ZOAUNIT-RE: diseño de simulación del director (ver funciones_sim3.R).
 # Cada corrida ajusta los bloques en paralelo y al final publica los .rds en un release con la etiqueta
 # indicada. Si se relanza con la misma etiqueta, se saltan los ajustes ya publicados.
+# El sistema se fija en ubuntu-24.04 (no ubuntu-latest) para que R, JAGS y los paquetes de apt no cambien
+# entre el piloto y el estudio principal.
 
 on:
   workflow_dispatch:
     inputs:
       familia:
-        description: "uw (Unit-Weibull), ug (Unit-Gamma) o ku (Kumaraswamy)"
+        description: "ug (Unit-Gamma, primera etapa), uw (Unit-Weibull) o ku (Kumaraswamy)"
         required: true
-        default: "uw"
+        default: "ug"
       enlaces:
-        description: "Enlaces separados por coma: logit, probit, cloglog, loglog"
+        description: "Enlaces separados por coma: logit, probit, cloglog"
         required: true
-        default: "logit"
+        default: "logit,probit,cloglog"
       escenarios:
         description: "todos, o lista separada por coma (p. ej. iM_sA_vE)"
         required: true
@@ -32,7 +34,7 @@ on:
         required: true
         default: "1-50"
       variante:
-        description: "director, previa_alt1, masas_alt o sigma_alt (análisis de sensibilidad)"
+        description: "director, o previa_alt1 (análisis de sensibilidad: previas con escalas x 2)"
         required: true
         default: "director"
       n_bloques:
@@ -46,11 +48,11 @@ on:
       etiqueta:
         description: "Etiqueta del release donde se publican los ajustes"
         required: true
-        default: "sim3-piloto-uw-logit"
+        default: "sim3-piloto-ug-logit-probit-cloglog"
 
 jobs:
   preparar:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
     outputs:
       matriz: ${{ steps.m.outputs.matriz }}
     steps:
@@ -67,7 +69,7 @@ jobs:
 
   ajustar:
     needs: preparar
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
     timeout-minutes: 355
     strategy:
       fail-fast: false
@@ -85,7 +87,10 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends r-cran-posterior || \
             sudo Rscript -e 'install.packages("posterior", repos = "https://cloud.r-project.org")'
           Rscript -e 'stopifnot(requireNamespace("posterior", quietly = TRUE))'
-          R --version | head -1
+          # Versiones del entorno (comentario 34); también quedan en registro/ y en cada ajuste.
+          Rscript -e 'cat(R.version.string, "| JAGS", as.character(rjags::jags.version()), "| posterior", as.character(packageVersion("posterior")), "\n")'
+          cat /etc/os-release | head -2
+          echo "Commit: $GITHUB_SHA"
           nproc
 
       - name: Ajustes ya publicados con esta etiqueta
@@ -128,7 +133,7 @@ jobs:
   publicar:
     needs: ajustar
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
     permissions:
       contents: write
     steps:

@@ -12,6 +12,11 @@
 ##     Unit-Weibull, Unit-gamma (y Kumaraswamy como segunda distribución, comentario 30); enlaces logit,
 ##     probit y cloglog; cuantiles 0.25, 0.50 y 0.75; inflación baja y moderada; heterogeneidad baja y
 ##     alta; piloto de 50 réplicas.
+##   * Diseño reformulado (18/10/2026; documento "Simulación 3: diseño reformulado"): objetivo de
+##     recuperación de parámetros; primera etapa Unit-Gamma (después Unit-Weibull y Kumaraswamy, cada una
+##     generada y ajustada consigo misma); logit, probit y cloglog sobre el mismo dataset; n = 30, 50, 100,
+##     200, 300 y 500; piloto R = 50 y estudio principal R = 500 (réplicas 51-500); sensibilidad con una
+##     alternativa de previas (escalas x 2) en n = 30 y 100, réplicas 1-20.
 ##   * Valores generadores controlados y estimados con los datos reales (comentario 36).
 ##   * Previas (comentario 32): beta y gamma ~ N(0, 2.5^2); sigma_b ~ half-normal(0, 1); phi con una
 ##     previa positiva específica de cada familia.
@@ -82,20 +87,16 @@ params_sim3_defecto <- list(
   previa_phi_ug = "2,0.65",
   previa_phi_ku = "2,0.6",
   ## Alternativa razonable para el análisis de sensibilidad (regresión, forma y heterogeneidad):
-  ## DE de la normal de beta y gamma, escala de la half-normal de sigma_b y Gamma(forma, tasa) de phi.
+  ## DE de la normal de beta, gamma y delta, escala de la half-normal de sigma_b y Gamma(forma, tasa) de phi.
   ## Admite varias alternativas separadas por ";" (la k-ésima de cada clave forma la alternativa k).
-  ## Aprobadas el 18/10/2026: las escalas de las previas base multiplicadas por 2 (alternativa 1, más
-  ## difusa) y divididas por 2 (alternativa 2, más concentrada): N(0, 5^2) y N(0, 1.25^2) para beta, gamma
-  ## y delta; half-normal(0, 2) y (0, 0.5) para sigma_b; Gamma(2, tasa/2) y Gamma(2, 2 tasa) para phi.
-  sens_sd_coef = "5;1.25",
-  sens_escala_sigma = "2;0.5",
-  sens_previa_phi_uw = "2,0.45;2,1.8",
-  sens_previa_phi_ug = "2,0.325;2,1.3",
-  sens_previa_phi_ku = "2,0.3;2,1.2",
-  ## Alternativas de diseño para confirmar los niveles elegidos (opciones B y C del 18/10/2026):
-  ## masas (baja; moderada) y sigma_b (baja; alta).
-  sens_masas = "0.10,0.08;0.20,0.15",
-  sens_sigma = "0.63;1.26",
+  ## Diseño reformulado (18/10/2026): una sola alternativa, las escalas de las previas base multiplicadas
+  ## por 2 a la vez: N(0, 5^2) para beta, gamma y delta; half-normal(0, 2) para sigma_b; Gamma(2, tasa/2)
+  ## para phi. Se corre en n = 30 y 100 con las réplicas 1-20 del piloto (los mismos datasets).
+  sens_sd_coef = "5",
+  sens_escala_sigma = "2",
+  sens_previa_phi_uw = "2,0.45",
+  sens_previa_phi_ug = "2,0.325",
+  sens_previa_phi_ku = "2,0.3",
   ## Perfiles de covariables donde se mide el error de los cuantiles: "sexo,edad_s;sexo,edad_s;..."
   ## Aprobados el 18/10/2026: hombre y mujer de edad media, y mujeres con edad -1 y +1 DE.
   perfiles = "0,0;1,0;1,-1;1,1",
@@ -120,7 +121,7 @@ params_sim3_defecto <- list(
   semilla = 20260927,
   icr = 0.95,
   ## ---------------- Ejecución ----------------
-  familia = "uw",
+  familia = "ug",                ## primera etapa: Unit-Gamma (decisión del 18/10/2026)
   enlace = "logit",
   cache_dir = "_cache_sim3",
   force_refit = FALSE
@@ -159,15 +160,15 @@ validar_configuracion <- function(...) {
 ## Variantes del análisis de sensibilidad
 ## ---------------------------------------------------------------------------------------------------
 ## "director": la configuración base. "previa_alt<k>": la alternativa k de las previas (sens_*).
-## "masas_alt" y "sigma_alt": los niveles alternativos de inflación y heterogeneidad (sens_masas, sens_sigma).
-## Las previas y los valores generadores entran en la huella de la clave de caché, así que los ajustes de
+## (Las variantes de niveles de diseño, masas_alt y sigma_alt, se retiraron con el diseño reformulado:
+## el director pide sensibilidad a las previas.) Las previas y los valores generadores entran en la huella de la clave de caché, así que los ajustes de
 ## cada variante quedan con claves distintas en la misma carpeta.
 partes_sens <- function(x) trimws(strsplit(as.character(x), ";", fixed = TRUE)[[1]])
 variantes_sim3 <- function(familia, base = P3) {
   claves <- c("sens_sd_coef", "sens_escala_sigma", paste0("sens_previa_phi_", familia))
   def <- !vapply(claves, function(k) identical(as.character(base[[k]]), "POR_DEFINIR"), logical(1))
   k_prev <- if (all(def)) max(vapply(claves, function(k) length(partes_sens(base[[k]])), 1L)) else 0L
-  c("director", if (k_prev > 0) paste0("previa_alt", seq_len(k_prev)), "masas_alt", "sigma_alt")
+  c("director", if (k_prev > 0) paste0("previa_alt", seq_len(k_prev)))
 }
 aplicar_variante <- function(variante, familia, base = P3) {
   if (identical(variante, "director")) return(base)
@@ -182,10 +183,6 @@ aplicar_variante <- function(variante, familia, base = P3) {
     out$previa_sd_coef <- as.numeric(tomar("sens_sd_coef"))
     out$escala_sigma <- as.numeric(tomar("sens_escala_sigma"))
     out[[paste0("previa_phi_", familia)]] <- tomar(paste0("sens_previa_phi_", familia))
-  } else if (identical(variante, "masas_alt")) {
-    v <- partes_sens(base$sens_masas); out$masas_B <- v[1]; out$masas_M <- v[2]
-  } else if (identical(variante, "sigma_alt")) {
-    v <- as.numeric(partes_sens(base$sens_sigma)); out$sigma_B <- v[1]; out$sigma_A <- v[2]
   } else stop("Variante no reconocida: ", variante, call. = FALSE)
   out
 }
@@ -214,10 +211,10 @@ softmax_masas <- function(eta0, eta1) {
 
 ## Enlaces del modelo ajustado: g^{-1} y log(-log theta) estable (de la v4).
 inv_enlace <- function(eta, enlace) {
-  switch(enlace, logit = plogis(eta), probit = pnorm(eta), cloglog = 1 - exp(-exp(eta)), loglog = exp(-exp(eta)))
+  switch(enlace, logit = plogis(eta), probit = pnorm(eta), cloglog = 1 - exp(-exp(eta)))
 }
 g_enlace <- function(theta, enlace) {
-  switch(enlace, logit = qlogis(theta), probit = qnorm(theta), cloglog = log(-log1p(-theta)), loglog = log(-log(theta)))
+  switch(enlace, logit = qlogis(theta), probit = qnorm(theta), cloglog = log(-log1p(-theta)))
 }
 lth_cloglog <- function(eta) {
   x <- exp(eta)
@@ -228,7 +225,6 @@ lth_enlace <- function(eta, enlace) {
     enlace,
     logit = log(log1p(exp(-pmax(eta, -700)))),
     probit = log(-pnorm(eta, log.p = TRUE)),
-    loglog = eta,
     cloglog = {
       x <- exp(pmin(eta, 700))
       suppressWarnings(ifelse(x > 1, lth_cloglog(eta), log(-log(-expm1(-x)))))
@@ -368,11 +364,7 @@ cuantiles_ajustados <- function(beta, g0, g1, phi, tau, enlace, familia, perfile
 ## ---------------------------------------------------------------------------------------------------
 ## Modelo JAGS (parametrización cuantílica de la v4; previas nuevas)
 ## ---------------------------------------------------------------------------------------------------
-## loglog: g(theta) = log(-log theta), el enlace del generador común (modelo bien especificado; 18/10/2026).
 llt_jags <- list(
-  loglog = "
-    llt[m] <- eta[m]
-",
   logit = "
     ec[m] <- max(min(eta[m], 35), -35)
     u[m] <- exp(-ec[m])
@@ -493,7 +485,7 @@ ajustar_sim3 <- function(sim, tau, enlace, usar_cache = TRUE) {
   dat <- list(N = sim$N, Nc = sim$Nc, n = sim$n, px = 3L, pz = 2L, Xs = sim$X_subject, Z = sim$Z,
               idc = sim$idc, lyc = sim$lyc, llyc = sim$llyc, grp = sim$grp, tau = tau, Cz = 1e6,
               zeros.c = rep(0, sim$Nc))
-  semilla_aj <- sim$seed + as.integer(round(1000 * tau)) + 7L * match(enlace, c("logit", "probit", "cloglog", "loglog"))
+  semilla_aj <- sim$seed + as.integer(round(1000 * tau)) + 7L * match(enlace, c("logit", "probit", "cloglog"))
   inits <- lapply(seq_len(cm$n_chains), function(ch) {
     set.seed(semilla_aj + 5000L * ch)
     beta0 <- rnorm(3, 0, 0.10)
@@ -506,35 +498,51 @@ ajustar_sim3 <- function(sim, tau, enlace, usar_cache = TRUE) {
   })
   dir.create(P3$cache_dir, showWarnings = FALSE, recursive = TRUE)
   inicio <- proc.time()[[3]]
-  jm <- rjags::jags.model(textConnection(modelo_jags_sim3(esc$familia, enlace)), data = dat, inits = inits,
-                          n.chains = cm$n_chains, n.adapt = cm$n_adapt, quiet = TRUE)
-  update(jm, n.iter = cm$n_burn, progress.bar = "none")
   vars <- c("beta", "gamma0", "gamma1", "varphi", "sigma.b")
-  mcmc <- rjags::coda.samples(jm, variable.names = vars, n.iter = cm$n_iter, thin = cm$n_thin, progress.bar = "none")
-  ## Extensión de las cadenas mientras no se cumpla el protocolo de convergencia.
+  ## Un error de JAGS (p. ej., una densidad no finita durante la adaptación) no detiene el bloque: la
+  ## réplica queda guardada como inestable, con el mensaje, y se cuenta en las métricas de estabilidad.
+  error_jags <- NULL
   extensiones <- 0L
-  cumple <- function(mc) {
-    d <- vapply(parametros_traza, function(v) {
-      m <- sapply(mc, function(ch) as.numeric(ch[, v]))
-      if (!all(is.finite(m))) return(c(Inf, 0, 0))
-      c(posterior::rhat(m), posterior::ess_bulk(m), posterior::ess_tail(m))
-    }, numeric(3))
-    max(d[1, ]) <= as.numeric(P3$rhat_max) && min(d[2:3, ]) >= as.numeric(P3$ess_min)
-  }
-  while (extensiones < cm$ext_max && !cumple(mcmc)) {
-    extra <- rjags::coda.samples(jm, variable.names = vars, n.iter = cm$n_iter, thin = cm$n_thin, progress.bar = "none")
-    mcmc <- coda::as.mcmc.list(lapply(seq_along(mcmc), function(ch)
-      coda::mcmc(rbind(as.matrix(mcmc[[ch]]), as.matrix(extra[[ch]])), start = start(mcmc[[ch]]), thin = cm$n_thin)))
-    extensiones <- extensiones + 1L
-  }
+  mcmc <- tryCatch({
+    jm <- rjags::jags.model(textConnection(modelo_jags_sim3(esc$familia, enlace)), data = dat, inits = inits,
+                            n.chains = cm$n_chains, n.adapt = cm$n_adapt, quiet = TRUE)
+    update(jm, n.iter = cm$n_burn, progress.bar = "none")
+    mc <- rjags::coda.samples(jm, variable.names = vars, n.iter = cm$n_iter, thin = cm$n_thin, progress.bar = "none")
+    ## Extensión de las cadenas mientras no se cumpla el protocolo de convergencia.
+    cumple <- function(mc) {
+      d <- vapply(parametros_traza, function(v) {
+        m <- sapply(mc, function(ch) as.numeric(ch[, v]))
+        if (!all(is.finite(m))) return(c(Inf, 0, 0))
+        c(posterior::rhat(m), posterior::ess_bulk(m), posterior::ess_tail(m))
+      }, numeric(3))
+      max(d[1, ]) <= as.numeric(P3$rhat_max) && min(d[2:3, ]) >= as.numeric(P3$ess_min)
+    }
+    while (extensiones < cm$ext_max && !cumple(mc)) {
+      extra <- rjags::coda.samples(jm, variable.names = vars, n.iter = cm$n_iter, thin = cm$n_thin, progress.bar = "none")
+      mc <- coda::as.mcmc.list(lapply(seq_along(mc), function(ch)
+        coda::mcmc(rbind(as.matrix(mc[[ch]]), as.matrix(extra[[ch]])), start = start(mc[[ch]]), thin = cm$n_thin)))
+      extensiones <- extensiones + 1L
+    }
+    mc
+  }, error = function(e) { error_jags <<- conditionMessage(e); NULL })
   out <- list(
     simulacion = "sim3", familia = esc$familia, enlace = enlace, escenario = esc, tau = tau,
     n = sim$n, replica = sim$replica, Nc = sim$Nc, mcmc = mcmc, extensiones = extensiones,
-    elapsed = proc.time()[[3]] - inicio, cache_status = "calculado", clave = key
+    elapsed = proc.time()[[3]] - inicio, cache_status = "calculado", clave = key,
+    error = error_jags,
+    ## Comentario 22: cota de la log-densidad interior frente a Cz (intensidad de Poisson no negativa).
+    ceros = if (is.null(mcmc)) NULL else chequeo_truco_ceros(esc$familia, as.vector(sapply(mcmc, function(ch)
+      as.numeric(ch[, "varphi"]))), -sim$lyc, dat$Cz),
+    ## Comentario 34: semillas, configuración y entorno de cómputo.
+    reproducibilidad = list(semilla_datos = sim$seed, semilla_ajuste = semilla_aj, config_mcmc = cm,
+                            previas = list(sd_coef = as.numeric(P3$previa_sd_coef),
+                                           escala_sigma = as.numeric(P3$escala_sigma),
+                                           phi = P3[[paste0("previa_phi_", esc$familia)]]),
+                            entorno = info_entorno())
   )
   if (identical(as.character(P3$guardar), "liviano")) {
     out$resumen <- resumir_ajuste_sim3(out)
-    out$mcmc <- adelgazar_mcmc(out$mcmc, as.integer(P3$extracciones_traza))
+    if (!is.null(out$mcmc)) out$mcmc <- adelgazar_mcmc(out$mcmc, as.integer(P3$extracciones_traza))
     out$liviano <- TRUE
   }
   saveRDS(out, ruta)
@@ -544,6 +552,49 @@ ajustar_sim3 <- function(sim, tau, enlace, usar_cache = TRUE) {
 ## ---------------------------------------------------------------------------------------------------
 ## Resumen de un ajuste (parámetros y cuantiles) y métricas Monte Carlo
 ## ---------------------------------------------------------------------------------------------------
+## Entorno de cómputo (comentario 34): versiones de R, JAGS y paquetes, sistema y, en GitHub Actions,
+## imagen del ejecutor, repositorio, commit y corrida. Se calcula una vez por proceso.
+info_entorno <- local({
+  guardado <- NULL
+  function() {
+    if (is.null(guardado)) {
+      ver <- function(p) tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA_character_)
+      guardado <<- list(
+        R = R.version.string, JAGS = tryCatch(as.character(rjags::jags.version()), error = function(e) NA_character_),
+        paquetes = vapply(c("rjags", "coda", "posterior"), ver, character(1)),
+        sistema = paste(Sys.info()[c("sysname", "release")], collapse = " "),
+        imagen = paste(Sys.getenv("ImageOS"), Sys.getenv("ImageVersion")),
+        repositorio = Sys.getenv("GITHUB_REPOSITORY"), commit = Sys.getenv("GITHUB_SHA"),
+        corrida = Sys.getenv("GITHUB_RUN_ID"), inicio_proceso = format(Sys.time(), tz = "UTC", usetz = TRUE)
+      )
+    }
+    guardado
+  }
+})
+
+## Comprobación del truco de los ceros (comentario 22). JAGS usa zeros.c[m] ~ dpois(Cz - logdc[m]); la media
+## debe ser no negativa en todo el muestreo. Condición suficiente: Cz mayor que el máximo de la log-densidad
+## interior sobre TODO valor de theta (es decir, de eta y b_i), para los phi muestreados y los y interiores.
+## Con t = -log y, ese máximo es h(phi) + t - log t:
+##   Unit-Gamma:   h = phi log phi - phi - lgamma(phi)
+##   Unit-Weibull: h = log phi - 1
+##   Kumaraswamy:  h = log phi + max_w {log w - w + (phi - 1) log(1 - e^-w)}
+chequeo_truco_ceros <- function(familia, phi, t, Cz) {
+  phi <- phi[is.finite(phi) & phi > 0]
+  if (!length(phi) || !length(t)) return(list(cota = NA_real_, margen = NA_real_, ok = NA))
+  if (length(phi) > 200) phi <- c(range(phi), quantile(phi, seq(0, 1, length.out = 198), names = FALSE))
+  h <- switch(
+    familia,
+    ug = max(phi * log(phi) - phi - lgamma(phi)),
+    uw = max(log(phi) - 1),
+    ku = max(vapply(phi, function(p) log(p) + optimize(function(lw)
+      lw - exp(lw) + (p - 1) * log(-expm1(-exp(lw))), c(-30, 10), maximum = TRUE)$objective, numeric(1))),
+    stop("Familia no reconocida: ", familia)
+  )
+  cota <- h + max(t - log(t))
+  list(cota = cota, margen = Cz - cota, ok = cota <= Cz)
+}
+
 ## Deja a lo sumo `k` extracciones por cadena (para guardar trazas sin todo el tamaño del ajuste).
 adelgazar_mcmc <- function(mc, k) {
   coda::as.mcmc.list(lapply(mc, function(ch) {
@@ -558,6 +609,23 @@ resumir_ajuste_sim3 <- function(fit, nivel = as.numeric(P3$icr), perfiles = perf
   alpha <- (1 - nivel) / 2
   pars <- c("beta[1]", "beta[2]", "beta[3]", "gamma0[1]", "gamma0[2]", "gamma1[1]", "gamma1[2]",
             "varphi", "sigma.b")
+  ceros_ok <- if (is.null(fit$ceros)) NA else fit$ceros$ok
+  ## Ajuste con error de JAGS: filas sin estimaciones, contadas como inestables.
+  if (!is.null(fit$error) || is.null(fit$mcmc)) {
+    verdad <- c(parametros_verdaderos(fit$escenario), cuantiles_verdaderos(fit$escenario, fit$tau, perfiles))
+    obj <- union(pars, names(verdad))
+    tipo <- ifelse(startsWith(obj, "theta["), "cuantil_interior", ifelse(startsWith(obj, "QY["), "cuantil_total",
+             ifelse(obj %in% names(verdad), "parametro_exacto", "parametro_sin_verdadero")))
+    return(data.frame(
+      Familia = fit$familia, Enlace = fit$enlace, Escenario = fit$escenario$id, Tau = fit$tau, n = fit$n,
+      Replica = fit$replica, Tipo = tipo, Objetivo = obj,
+      Verdadero = unname(ifelse(obj %in% names(verdad), verdad[obj], NA_real_)),
+      Estimacion = NA_real_, Mediana = NA_real_, DE_post = NA_real_, LI = NA_real_, LS = NA_real_,
+      Rhat = NA_real_, ESS_bulk = NA_real_, ESS_tail = NA_real_, Finitos = FALSE, N_cadenas = NA_integer_,
+      Tiempo_min = fit$elapsed / 60, Extensiones = fit$extensiones, Ceros_ok = ceros_ok,
+      Error = if (is.null(fit$error)) "sin extracciones" else fit$error, stringsAsFactors = FALSE
+    ))
+  }
   arr <- lapply(pars, function(v) sapply(fit$mcmc, function(ch) as.numeric(ch[, v]))); names(arr) <- pars
   plano <- function(v) as.vector(arr[[v]])
   q_post <- cuantiles_ajustados(cbind(plano("beta[1]"), plano("beta[2]"), plano("beta[3]")),
@@ -567,12 +635,6 @@ resumir_ajuste_sim3 <- function(fit, nivel = as.numeric(P3$icr), perfiles = perf
   ncad <- length(fit$mcmc)
   objetivos <- c(arr, lapply(q_post, function(x) matrix(x, ncol = ncad)))
   verdad <- c(parametros_verdaderos(fit$escenario), cuantiles_verdaderos(fit$escenario, fit$tau, perfiles))
-  ## Con el enlace del generador, beta_tau = beta + c_d(tau, phi) e_1 y sigma_b también tienen valor verdadero.
-  if (identical(fit$enlace, "loglog")) {
-    esc <- fit$escenario
-    bt <- unname(esc$beta) + c(c_cuantil(fit$tau, esc$phi, esc$familia), 0, 0)
-    verdad <- c(verdad, `beta[1]` = bt[1], `beta[2]` = bt[2], `beta[3]` = bt[3], sigma.b = esc$sigma_b)
-  }
   filas <- lapply(names(objetivos), function(v) {
     m <- objetivos[[v]]; x <- as.vector(m); ok <- all(is.finite(x))
     tipo <- if (startsWith(v, "theta[")) "cuantil_interior" else if (startsWith(v, "QY[")) "cuantil_total" else
@@ -581,13 +643,14 @@ resumir_ajuste_sim3 <- function(fit, nivel = as.numeric(P3$icr), perfiles = perf
       Familia = fit$familia, Enlace = fit$enlace, Escenario = fit$escenario$id, Tau = fit$tau, n = fit$n,
       Replica = fit$replica, Tipo = tipo, Objetivo = v,
       Verdadero = if (v %in% names(verdad)) unname(verdad[v]) else NA_real_,
-      Estimacion = mean(x), DE_post = sd(x),
+      Estimacion = mean(x), Mediana = median(x), DE_post = sd(x),
       LI = unname(quantile(x, alpha, na.rm = TRUE)), LS = unname(quantile(x, 1 - alpha, na.rm = TRUE)),
       Rhat = if (ok) posterior::rhat(m) else NA_real_,
       ESS_bulk = if (ok) posterior::ess_bulk(m) else NA_real_,
       ESS_tail = if (ok) posterior::ess_tail(m) else NA_real_,
       Finitos = ok, N_cadenas = ncad, Tiempo_min = fit$elapsed / 60,
       Extensiones = if (is.null(fit$extensiones)) NA_integer_ else fit$extensiones,
+      Ceros_ok = ceros_ok, Error = NA_character_,
       stringsAsFactors = FALSE
     )
   })
@@ -620,8 +683,10 @@ metricas_celda <- function(d) {
 }
 
 ## Convergencia por réplica con el protocolo del director (R-hat <= 1.01; ESS bulk y tail >= 400).
-## Una réplica se cuenta como numéricamente inestable si produjo extracciones no finitas.
-convergencia_replica <- function(res) {
+## Una réplica se cuenta como numéricamente inestable si produjo extracciones no finitas o un error de JAGS.
+## Métricas de estabilidad adicionales (diseño reformulado): error de JAGS, extensiones usadas, sigma_b en la
+## frontera (mediana posterior < umbral_sigma), truco de los ceros cumplido y tiempo por ajuste.
+convergencia_replica <- function(res, umbral_sigma = 0.05) {
   p <- res[res$Tipo %in% c("parametro_exacto", "parametro_sin_verdadero"), ]
   clave <- do.call(paste, c(p[, c("Familia", "Enlace", "Escenario", "Tau", "n", "Replica")], sep = "|"))
   agg <- function(x, f) tapply(x, clave, f)
@@ -636,7 +701,16 @@ convergencia_replica <- function(res) {
   out$Conv_director <- out$Finitos & out$Rhat_max <= as.numeric(P3$rhat_max) &
     out$ESS_bulk_min >= as.numeric(P3$ess_min) & out$ESS_tail_min >= as.numeric(P3$ess_min)
   out$Conv_director[is.na(out$Conv_director)] <- FALSE
-  out$Inestable <- !out$Finitos
+  out$Error_JAGS <- if ("Error" %in% names(p)) as.logical(agg(!is.na(p$Error), any)[k]) else FALSE
+  out$Inestable <- !out$Finitos | out$Error_JAGS
+  out$Conv_director[out$Inestable] <- FALSE
+  sb <- p[p$Objetivo == "sigma.b", ]
+  med_sb <- if ("Mediana" %in% names(sb)) sb$Mediana else rep(NA_real_, nrow(sb))
+  names(med_sb) <- do.call(paste, c(sb[, c("Familia", "Enlace", "Escenario", "Tau", "n", "Replica")], sep = "|"))
+  out$Sigma_b_mediana <- unname(med_sb[k])
+  out$Sigma_b_frontera <- !is.na(out$Sigma_b_mediana) & out$Sigma_b_mediana < umbral_sigma
+  out$Ceros_ok <- if ("Ceros_ok" %in% names(p)) as.logical(agg(p$Ceros_ok, function(z) if (all(is.na(z))) NA else all(z, na.rm = TRUE))[k]) else NA
+  out$Tiempo_min <- if ("Tiempo_min" %in% names(p)) as.numeric(agg(p$Tiempo_min, max)[k]) else NA_real_
   rownames(out) <- NULL
   out
 }
