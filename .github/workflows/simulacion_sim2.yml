@@ -1,0 +1,171 @@
+name: Simulacion 2
+
+# Simulación 2 de ZOAUNIT-RE (escenarios del director del 21/10/2026; ver funciones_sim2.R):
+# 27 escenarios (inflación x sigma_b x phi) por familia, enlace y tau; cada ajuste con sus propios datos,
+# generados con el mismo modelo que se ajusta (diseño de la simulación 1).
+# Cada corrida ajusta los bloques en paralelo y al final publica los .rds en un release con la etiqueta
+# indicada. Si se relanza con la misma etiqueta, se saltan los ajustes ya publicados.
+# El sistema se fija en ubuntu-24.04 (no ubuntu-latest) para que R, JAGS y los paquetes de apt no cambien
+# entre corridas.
+
+on:
+  workflow_dispatch:
+    inputs:
+      familia:
+        description: "ug (Unit-Gamma), uw (Unit-Weibull) o ku (Kumaraswamy)"
+        required: true
+        default: "ug"
+      enlaces:
+        description: "Enlaces separados por coma: logit, probit, cloglog"
+        required: true
+        default: "logit,probit,cloglog"
+      escenarios:
+        description: "todos (27), o lista separada por coma (p. ej. i1008_s10_fM,i2030_s15_fA)"
+        required: true
+        default: "todos"
+      taus:
+        description: "Cuantiles (cada uno con sus propios datos)"
+        required: true
+        default: "0.25,0.50,0.75"
+      n_sujetos:
+        description: "Tamaños de muestra"
+        required: true
+        default: "30,50,100,300,500"
+      replicas:
+        description: "Rango de réplicas ini-fin"
+        required: true
+        default: "1-100"
+      variante:
+        description: "director, o previa_alt1 (análisis de sensibilidad: previas con escalas x 2)"
+        required: true
+        default: "director"
+      n_bloques:
+        description: "Trabajos de esta corrida (máx. 256); GitHub corre a la vez los que permita la cuenta (80 en Sinu-Labs)"
+        required: true
+        default: "128"
+      horas_max:
+        description: "Horas tras las cuales un trabajo no empieza ajustes nuevos"
+        required: true
+        default: "5"
+      etiqueta:
+        description: "Etiqueta del release donde se publican los ajustes"
+        required: true
+        default: "sim2-ug-logit-r001-100"
+
+jobs:
+  preparar:
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
+    outputs:
+      matriz: ${{ steps.m.outputs.matriz }}
+    steps:
+      - id: m
+        env:
+          N_BLOQUES: ${{ inputs.n_bloques }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          nb = int(os.environ["N_BLOQUES"])
+          assert 1 <= nb <= 256, "Entre 1 y 256 trabajos por corrida"
+          print("matriz=" + json.dumps({"bloque": list(range(1, nb + 1))}))
+          PY
+
+  ajustar:
+    needs: preparar
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preparar.outputs.matriz) }}
+    name: sim2 ${{ inputs.familia }} ${{ inputs.enlaces }} ${{ inputs.variante }} bloque ${{ matrix.bloque }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar R y JAGS
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            r-base-core jags r-cran-rjags r-cran-coda
+          # posterior: R-hat y ESS del protocolo del director (extensión de cadenas en ajustar_sim2).
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends r-cran-posterior || \
+            sudo Rscript -e 'install.packages("posterior", repos = "https://cloud.r-project.org")'
+          Rscript -e 'stopifnot(requireNamespace("posterior", quietly = TRUE))'
+          # Versiones del entorno (comentario 34); también quedan en registro/ y en cada ajuste.
+          Rscript -e 'cat(R.version.string, "| JAGS", as.character(rjags::jags.version()), "| posterior", as.character(packageVersion("posterior")), "\n")'
+          cat /etc/os-release | head -2
+          echo "Commit: $GITHUB_SHA"
+          nproc
+
+      - name: Ajustes ya publicados con esta etiqueta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p previos
+          gh release download "${{ inputs.etiqueta }}" -R "${{ github.repository }}" -p 'lista_*.txt' -D previos || true
+          cat previos/*.txt 2>/dev/null > hechos_sim2.txt || true
+          echo "Ajustes ya publicados: $(wc -l < hechos_sim2.txt)"
+
+      - name: Ajustar
+        env:
+          FAMILIA: ${{ inputs.familia }}
+          ENLACES: ${{ inputs.enlaces }}
+          ESCENARIOS: ${{ inputs.escenarios }}
+          TAUS: ${{ inputs.taus }}
+          N_SUJETOS: ${{ inputs.n_sujetos }}
+          REPLICAS: ${{ inputs.replicas }}
+          VARIANTE: ${{ inputs.variante }}
+          BLOQUE: ${{ matrix.bloque }}
+          N_BLOQUES: ${{ inputs.n_bloques }}
+          HORAS_MAX: ${{ inputs.horas_max }}
+          CACHE_DIR: _cache_sim2
+          GUARDAR: liviano
+          HECHOS: hechos_sim2.txt
+        run: Rscript run_bloque_sim2.R
+
+      - name: Subir resultados del bloque
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim2-${{ github.run_id }}-bloque${{ matrix.bloque }}
+          path: |
+            _cache_sim2/
+            registro/
+          if-no-files-found: warn
+          retention-days: 7
+
+  publicar:
+    needs: ajustar
+    if: always()
+    runs-on: ubuntu-24.04   # versión fija del sistema (reproducibilidad)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sim2-${{ github.run_id }}-bloque*
+          merge-multiple: true
+          path: todo
+
+      - name: Empaquetar y publicar en el release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ETIQUETA: ${{ inputs.etiqueta }}
+          RUN: ${{ github.run_id }}
+        run: |
+          set -e
+          mkdir -p salida todo/_cache_sim2 todo/registro
+          ( cd todo/_cache_sim2 && ls -1 | grep '\.rds$' || true ) > salida/lista_${ETIQUETA}_${RUN}.txt
+          echo "Ajustes nuevos: $(wc -l < salida/lista_${ETIQUETA}_${RUN}.txt)"
+          # Partes de hasta 10000 ajustes (con trazas solo en las réplicas 1-5, < 1 GB) para no pasar el
+          # límite de 2 GB por archivo del release.
+          split -l 10000 -d -a 3 salida/lista_${ETIQUETA}_${RUN}.txt salida/parte_
+          for p in salida/parte_*; do
+            [ -s "$p" ] || continue
+            k=$(basename "$p" | sed 's/parte_//')
+            tar -cf "salida/cache_${ETIQUETA}_${RUN}_${k}.tar" -C todo/_cache_sim2 -T "$p"
+          done
+          rm -f salida/parte_*
+          ( cd todo && zip -qr "../salida/registro_${ETIQUETA}_${RUN}.zip" registro )
+          gh release view "$ETIQUETA" -R "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$ETIQUETA" -R "${{ github.repository }}" --title "$ETIQUETA" \
+              --notes "Ajustes de la simulación 2 (familia ${{ inputs.familia }}, enlaces ${{ inputs.enlaces }}, escenarios ${{ inputs.escenarios }}, n ${{ inputs.n_sujetos }}, réplicas ${{ inputs.replicas }}, variante ${{ inputs.variante }})."
+          gh release upload "$ETIQUETA" -R "${{ github.repository }}" --clobber salida/*
