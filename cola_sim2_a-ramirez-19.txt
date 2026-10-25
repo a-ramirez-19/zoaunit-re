@@ -1,0 +1,24 @@
+# Cola de la simulación 2 en a-ramirez-19/zoaunit-re (20 runners). Una unidad = 50 réplicas en 128 trabajos.
+# umbral=20 max_lanzar=1 bloques=128 intentos=3
+ku probit 301-350 sim2-ku-probit-r301-400
+ku probit 351-400 sim2-ku-probit-r301-400
+ku cloglog 301-350 sim2-ku-cloglog-r301-400
+ku cloglog 351-400 sim2-ku-cloglog-r301-400
+ug logit 401-450 sim2-ug-logit-r401-500
+ug logit 451-500 sim2-ug-logit-r401-500
+ug probit 401-450 sim2-ug-probit-r401-500
+ug probit 451-500 sim2-ug-probit-r401-500
+ug cloglog 401-450 sim2-ug-cloglog-r401-500
+ug cloglog 451-500 sim2-ug-cloglog-r401-500
+uw logit 401-450 sim2-uw-logit-r401-500
+uw logit 451-500 sim2-uw-logit-r401-500
+uw probit 401-450 sim2-uw-probit-r401-500
+uw probit 451-500 sim2-uw-probit-r401-500
+uw cloglog 401-450 sim2-uw-cloglog-r401-500
+uw cloglog 451-500 sim2-uw-cloglog-r401-500
+ku logit 401-450 sim2-ku-logit-r401-500
+ku logit 451-500 sim2-ku-logit-r401-500
+ku probit 401-450 sim2-ku-probit-r401-500
+ku probit 451-500 sim2-ku-probit-r401-500
+ku cloglog 401-450 sim2-ku-cloglog-r401-500
+ku cloglog 451-500 sim2-ku-cloglog-r401-500
