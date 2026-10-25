@@ -1,0 +1,29 @@
+name: Despachador sim2
+
+# Lanza las unidades de la simulación 2 (cola_sim2_<dueño>.txt) de a poco, para que ningún trabajo espere
+# más de 24 h en cola (GitHub lo cancela). Ver despachar_sim2.py.
+# Para pausarlo: Actions > Despachador sim2 > ... > Disable workflow.
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: despachador-sim2
+  cancel-in-progress: false
+
+jobs:
+  despachar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lanzar unidades pendientes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 despachar_sim2.py

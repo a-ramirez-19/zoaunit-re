@@ -1,4 +1,6 @@
 name: Simulacion 2
+# Título de cada corrida: lo usa despachar_sim2.py para saber qué unidades de la cola ya se lanzaron.
+run-name: "sim2 ${{ inputs.etiqueta }} ${{ inputs.replicas }}"
 
 # Simulación 2 de ZOAUNIT-RE (escenarios del director del 21/10/2026; ver funciones_sim2.R):
 # 27 escenarios (inflación x sigma_b x phi) por familia, enlace y tau; cada ajuste con sus propios datos,
@@ -40,7 +42,7 @@ on:
         required: true
         default: "director"
       n_bloques:
-        description: "Trabajos de esta corrida (máx. 256); GitHub corre a la vez los que permita la cuenta (80 en Sinu-Labs)"
+        description: "Trabajos de esta corrida (máx. 256); GitHub corre a la vez los que permita la cuenta (60 en Sinu-Labs, 20 en a-ramirez-19); un trabajo que espera más de 24 h en cola se cancela"
         required: true
         default: "128"
       horas_max:
@@ -165,7 +167,9 @@ jobs:
           done
           rm -f salida/parte_*
           ( cd todo && zip -qr "../salida/registro_${ETIQUETA}_${RUN}.zip" registro )
+          # Dos unidades de la misma etiqueta pueden publicar casi a la vez: si el create choca, se sigue.
           gh release view "$ETIQUETA" -R "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$ETIQUETA" -R "${{ github.repository }}" --title "$ETIQUETA" \
-              --notes "Ajustes de la simulación 2 (familia ${{ inputs.familia }}, enlaces ${{ inputs.enlaces }}, escenarios ${{ inputs.escenarios }}, n ${{ inputs.n_sujetos }}, réplicas ${{ inputs.replicas }}, variante ${{ inputs.variante }})."
+              --notes "Ajustes de la simulación 2 (familia ${{ inputs.familia }}, enlaces ${{ inputs.enlaces }}, escenarios ${{ inputs.escenarios }}, n ${{ inputs.n_sujetos }}, variante ${{ inputs.variante }})." || \
+            { sleep 10; gh release view "$ETIQUETA" -R "${{ github.repository }}" >/dev/null; }
           gh release upload "$ETIQUETA" -R "${{ github.repository }}" --clobber salida/*
