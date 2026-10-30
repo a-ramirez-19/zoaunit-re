@@ -10,6 +10,8 @@
 #   TIPO       tipo de máquina (por defecto c3d-highcpu-180; prueba: c3d-highcpu-8)
 #   N_VMS      número de VMs que se reparten el trabajo (por defecto 2; prueba: 1)
 #   PREFIJO    prefijo del nombre de las VMs (por defecto sim2-vm; prueba: sim2-prueba)
+#   INDICES    cuáles de las N_VMS crear ahora (por defecto todas). Sirve para VMs de distinto tamaño
+#              que se reparten el trabajo: INDICES=1 TIPO=c3d-highcpu-8 y luego INDICES=2 TIPO=c3d-highcpu-4
 #   BUCKET     bucket de resultados (por defecto sim2-zoaunit-<proyecto>)
 #   REPLICAS, ESCENARIOS, FAMILIAS   para cambiar el alcance
 #   SI=1       no pide confirmación
@@ -44,7 +46,10 @@ echo; echo "Cuotas de la región $REGION (límite / en uso):"
 gcloud compute regions describe "$REGION" --project "$PROYECTO" --format=json \
   | python3 -c "import json,sys; q=json.load(sys.stdin)['quotas']; [print(f\"  {x['metric']}: {x['limit']:.0f} / {x['usage']:.0f}\") for x in q if x['metric'] in ('CPUS','C3D_CPUS','PREEMPTIBLE_CPUS','SSD_TOTAL_GB','DISKS_TOTAL_GB')]"
 NUC=$(echo "$TIPO" | grep -o '[0-9]*$')
-echo "Se necesitan $(( NUC * N_VMS )) vCPU de C3D (y de CPUS o PREEMPTIBLE_CPUS)."
+INDICES=${INDICES:-$(seq -s " " 1 "$N_VMS")}
+NI=$(echo $INDICES | wc -w)
+echo "VMs a crear ahora: $INDICES (de $N_VMS)"
+echo "Se necesitan $(( NUC * NI )) vCPU de C3D (y de CPUS o PREEMPTIBLE_CPUS)."
 
 if [ -z "${SI:-}" ]; then read -r -p "¿Crear las VMs? (s/n) " r; [[ "$r" =~ ^[sS] ]] || { echo "No se creó nada."; exit 0; }; fi
 
@@ -61,7 +66,7 @@ printf '%s' "$ESCENARIOS" > "$T/escenarios"; printf '%s' "$FAMILIAS" > "$T/famil
 printf '%s' "${ENLACES:-logit,probit,cloglog}" > "$T/enlaces"; printf '%s' "${TAUS:-0.25,0.50,0.75}" > "$T/taus"
 printf '%s' "${N_SUJETOS:-30,50,100,300,500}" > "$T/n-sujetos"
 
-for i in $(seq 1 "$N_VMS"); do
+for i in $INDICES; do
   NOMBRE=$PREFIJO$i
   echo "Creando $NOMBRE ..."
   gcloud compute instances create "$NOMBRE" --project "$PROYECTO" --zone "$ZONA" \
