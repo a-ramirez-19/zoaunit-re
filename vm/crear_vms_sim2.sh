@@ -9,6 +9,7 @@
 #   ZONA       por defecto us-central1-a
 #   TIPO       tipo de máquina (por defecto c3d-highcpu-180; prueba: c3d-highcpu-8)
 #   N_VMS      número de VMs que se reparten el trabajo (por defecto 2; prueba: 1)
+#   PREFIJO    prefijo del nombre de las VMs (por defecto sim2-vm; prueba: sim2-prueba)
 #   BUCKET     bucket de resultados (por defecto sim2-zoaunit-<proyecto>)
 #   REPLICAS, ESCENARIOS, FAMILIAS   para cambiar el alcance
 #   SI=1       no pide confirmación
@@ -24,10 +25,10 @@ REGION=${ZONA%-*}
 BUCKET=${BUCKET:-sim2-zoaunit-$PROYECTO}
 COMMIT=$(git rev-parse HEAD)
 if [ "$MODO" = "prueba" ]; then
-  TIPO=${TIPO:-c3d-highcpu-8}; N_VMS=${N_VMS:-1}; PREFIJO=sim2-prueba
+  TIPO=${TIPO:-c3d-highcpu-8}; N_VMS=${N_VMS:-1}; PREFIJO=${PREFIJO:-sim2-prueba}
   ESCENARIOS=${ESCENARIOS:-i1008_s10_fM}; FAMILIAS=${FAMILIAS:-ku ug}; REPLICAS=${REPLICAS:-1-1}
 else
-  TIPO=${TIPO:-c3d-highcpu-180}; N_VMS=${N_VMS:-2}; PREFIJO=sim2-vm
+  TIPO=${TIPO:-c3d-highcpu-180}; N_VMS=${N_VMS:-2}; PREFIJO=${PREFIJO:-sim2-vm}
   ESCENARIOS=${ESCENARIOS:-i1008_s05_fM,i1008_s10_fM,i1008_s15_fM,i2030_s05_fM,i2030_s10_fM,i2030_s15_fM,i3020_s05_fM,i3020_s10_fM,i3020_s15_fM}
   FAMILIAS=${FAMILIAS:-ku uw ug}; REPLICAS=${REPLICAS:-1-500}
 fi
@@ -49,6 +50,11 @@ if [ -z "${SI:-}" ]; then read -r -p "¿Crear las VMs? (s/n) " r; [[ "$r" =~ ^[s
 
 gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 || \
   gcloud storage buckets create "gs://$BUCKET" --project "$PROYECTO" --location "$REGION" --uniform-bucket-level-access
+# La cuenta de servicio por defecto de las VMs no siempre tiene permisos sobre Cloud Storage: se le dan
+# sobre este bucket (si ya los tiene, no cambia nada).
+SA="$(gcloud projects describe "$PROYECTO" --format 'value(projectNumber)')-compute@developer.gserviceaccount.com"
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$SA" \
+  --role roles/storage.objectAdmin --format 'value(etag)' >/dev/null
 
 T=$(mktemp -d)
 printf '%s' "$ESCENARIOS" > "$T/escenarios"; printf '%s' "$FAMILIAS" > "$T/familias"
